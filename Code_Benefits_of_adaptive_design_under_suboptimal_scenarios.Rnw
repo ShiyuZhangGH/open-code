@@ -1,0 +1,1569 @@
+\documentclass[letter,12pt]{article}
+\usepackage{setspace}
+\usepackage{times}
+
+
+\date{}
+\author{}
+
+\usepackage{fullpage}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman,english]{babel}
+\usepackage[parfill]{parskip}
+
+\usepackage{authblk}
+
+\usepackage{makecell}
+\usepackage{caption}
+
+
+\DeclareCaptionLabelSeparator*{spaced}{\\[2ex]}
+\captionsetup[figure]{labelsep=period,labelfont=it,justification=justified,
+  singlelinecheck=false,font=doublespacing}
+  
+
+
+% \usepackage{enumerate}
+\usepackage{enumitem}
+\usepackage{apacite}
+\usepackage{bibentry}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\newcommand{\tabitem}{~~\llap{\textbullet}~~}
+% \usepackage{multirow}
+\usepackage{multicol}
+\usepackage{amsmath}
+\usepackage{mathtools}
+\usepackage{textcomp}
+
+\usepackage{graphicx}
+% \usepackage[inline]{enumitem}
+\usepackage{xcolor}
+\usepackage{colortbl}
+
+
+\usepackage{soul}
+\newcommand{\mathcolorbox}[2]{\colorbox{#1}{$\displaystyle #2$}}
+
+
+\usepackage{pifont}
+\usepackage{amssymb}
+
+\usepackage{tikz}
+\usetikzlibrary{plotmarks}
+\newcommand\marksymbol[2]{\tikz[#2,scale=2.5]\pgfuseplotmark{#1};}
+
+\usepackage{etoolbox}
+
+\usepackage{siunitx} %scientific notation
+
+\usepackage{comment}
+
+\usepackage{sectsty}
+\sectionfont{\fontsize{12}{12}\selectfont}
+\subsectionfont{\fontsize{12}{12}\selectfont}
+\subsubsectionfont{\fontsize{12}{12}\selectfont}
+
+\pagenumbering{gobble}
+
+\usepackage{longtable}
+\usepackage{rotating}
+
+
+\begin{document}
+
+<<include= FALSE, echo= FALSE>>=
+opts_chunk$set(echo=FALSE, comment=NA, include=FALSE, cache=FALSE) #Globally set whether to show the R codes
+options(scipen = 7, digits = 4)
+library(foreign)
+library(Hmisc)
+library(dplyr)
+library(tidyr)
+library(car)
+library(ggplot2)
+library(cowplot)
+library(rsq)
+library(MASS)
+library(survey)
+library(arm) #extract se column from a regression model
+library(xtable)
+library(gridExtra)
+library(grid)
+library(ROCR)
+library(pROC)
+library(DescTools)
+library(matlib)
+@
+
+
+Simulating the population
+
+
+<<Simulating a population>>=
+N= 5000000 #10000000 
+
+mu<- c(0, 0, 0, 0)
+covariance<- matrix(c(1,   0.2, 0,   0,   
+                      0.2, 1,   0,   0,   
+                      0,   0,   1,   0,   
+                      0,   0,   0,   1),
+                    4, 4)
+
+set.seed(33)
+dat<- mvrnorm(N, mu, covariance)
+colnames(dat)<- c("X1", "X2", "X3", "X4")
+dat<- data.frame(dat)
+
+#Continuous Y variable as a function of X
+b0.Y= 5
+b1.Y= 1
+b2.Y= 1
+b3.Y= 1
+b4.Y= -1
+
+sigma= 2
+set.seed(10)
+dat$Y<- b0.Y+ 
+        b1.Y*dat$X1+
+        b2.Y*dat$X2+
+        b3.Y*dat$X3+
+        b4.Y*dat$X4+
+        rnorm(N, mean= 0, sd= sigma)
+summary(dat$Y)
+
+trueY<- mean(dat$Y)
+@
+
+
+<<Parameters for response propensity models>>=
+b0.R= -1.3
+b1.R= 0.5
+b2.R= 0.5
+b3.R= -0.4
+b4.R= -0.4
+
+
+@
+
+
+<<n1 and n2 size>>=
+n1= 3000 #sample size 1
+n2= 3000
+@
+
+Plotting Figure 4.
+
+<<deviation in estimated propensity>>=
+mechanisms<- c("A", "B", "C")
+scatter_plots<- list()
+
+for (s in mechanisms){
+  if (s%in% c("A")){
+  dat$Rlogit<- b0.R+
+           b1.R*dat$X1+
+           b2.R*dat$X2+
+           b3.R*dat$X3+
+           b4.R*dat$X4
+  } else if (s%in% c("B")){
+    dat$Rlogit<- b0.R+
+             b1.R*dat$X1+
+             b2.R*dat$X2+
+             b3.R*dat$X3+
+             b4.R*dat$X4+
+             b2.R*dat$X2*dat$X2+
+             b1.R*0.2*dat$X1*dat$X3+
+             b2.R*0.5*dat$X2*dat$X4+
+             b1.R*0.2*dat$X1*dat$X2
+  } else if (s%in% c("C")){
+    dat$Rlogit<- b0.R+
+             b1.R*dat$X1+
+             b2.R*dat$X2+
+             b3.R*dat$X3+
+             b4.R*dat$X4+
+             b2.R*dat$X2*dat$X2+
+             b4.R*dat$X4*dat$X4+
+             b1.R*0.5*dat$X1*dat$X3+
+             b1.R*0.5*dat$X1*dat$X4+
+             b2.R*0.5*dat$X2*dat$X3+
+             b2.R*0.5*dat$X2*dat$X4+
+             b3.R*0.5*dat$X3*dat$X4
+  }
+
+  print(s)
+  print(summary(dat$Rlogit))
+
+  dat$RRP<- exp(dat$Rlogit)/(1+ exp(dat$Rlogit))
+  set.seed(9001)
+  dat$respondent<- as.numeric(dat$RRP>= runif(N))
+
+  glm_pop_main<- glm(respondent~ X1+ X2+ X3+ X4, data= dat, family= "binomial")
+  glm_pop_omit<- glm(respondent~     X2+ X3+ X4, data= dat, family= "binomial")
+
+  dat$RRP_predict_main<- predict(glm_pop_main, dat, type= "response")
+  dat$RRP_predict_omit<- predict(glm_pop_omit, dat, type= "response")
+
+  g_main<- ggplot(dat[0:1500,])+
+    geom_point(aes(x= RRP, y= RRP_predict_main), size= 0.05)+
+    xlim(0, 1)+
+    ylim(0, 1)+
+    xlab("true propensity")+
+    ylab("estimated propensity")+
+    geom_abline(intercept= 0, slope= 1, color= "darkgray")+
+    annotate(geom= "text", x= 0.25, y= 1, label= paste0("correlation=",
+                                                        round(cor(dat$RRP, dat$RRP_predict_main), 2)))
+
+  g_omit<- ggplot(dat[0:1500,])+
+    geom_point(aes(x= RRP, y= RRP_predict_omit), size= 0.05)+
+    xlim(0, 1)+
+    ylim(0, 1)+
+    xlab("true propensity")+
+    ylab("estimated propensity")+
+    geom_abline(intercept= 0, slope= 1, color= "darkgray")+
+    annotate(geom= "text", x= 0.3, y= 1, label= paste0("correlation=",
+                                                        round(cor(dat$RRP, dat$RRP_predict_omit), 2)))
+
+  g<- list(g_main, g_omit)
+  names(g)<- c(paste0(s, "main"), paste0(s, "omit"))
+
+  scatter_plots<- append(scatter_plots, g)
+}
+
+@
+
+
+<<include=TRUE, fig.align='center', out.width = '1\\textwidth'>>=
+sa<- scatter_plots$Amain
+sb<- scatter_plots$Bmain
+sc<- scatter_plots$Cmain
+
+grid.arrange(sa, sb, sc,
+          nrow= 1,
+          respect= TRUE)
+@
+  
+*Not included in the manuscript: True propensity vs. estimated propensity with X1 omitted from the model
+  
+<<include=TRUE, fig.align='center', out.width = '1\\textwidth'>>=
+#Comment them out for now.
+sa_o<- scatter_plots$Aomit
+sb_o<- scatter_plots$Bomit
+sc_o<- scatter_plots$Comit
+
+grid.arrange(sa_o, sb_o, sc_o,
+          nrow= 1,
+          respect= TRUE)
+@
+  
+ 
+
+<<B size>>=
+B= n2 #Total budget
+@
+
+
+<<>>=
+nRep= 5000 #5000 number of repetitions
+@
+
+
+The main analysis. 
+
+<<>>=
+options(scipen = 7, digits = 7) #Overwrite the number of digits setting in the begining
+
+allocation= c("cat", "lin")
+
+resultList_coef_allo<- list(NULL, NULL)
+names(resultList_coef_allo)<- allocation
+
+evaluationList_coef_allo<- list(NULL, NULL)
+names(evaluationList_coef_allo)<- allocation
+for (a in c(1, 2)){ #a stands for allocation: categorical ("cat") or linear ("lin")
+  
+  resultList_coef<- list(NULL, NULL)
+  names(resultList_coef)<- c("medi", "good")
+  
+  evaluationList_coef<- list(NULL, NULL)
+  names(evaluationList_coef)<- c("medi", "good")
+  for (c in c(1, 2)){ #c stands for coefficient
+    if (c==1){
+      alpha= 0.16
+      gamma= -0.1
+    } else if (c== 2){
+      alpha= 0.30
+      gamma= -0.1
+    }
+  
+    loop<- c("A", "Aomit1", "B", "Bomit1", "C", "Comit1",
+             "A_probit", "Aomit1_probit", "B_probit", "Bomit1_probit", "C_probit", "Comit1_probit")
+    
+    resultList<- list(NULL, NULL, NULL, NULL, NULL, NULL, 
+                      NULL, NULL, NULL, NULL, NULL, NULL)
+    names(resultList)<- loop
+    
+    evaluationList<- list(NULL, NULL, NULL, NULL, NULL, NULL, 
+                          NULL, NULL, NULL, NULL, NULL, NULL)
+    names(evaluationList)<- loop
+    
+    
+    for (i in 1:length(loop)){
+      
+      #initiating list/dataframe to store the estimate results
+      df<- data.frame(matrix(ncol= 8, nrow= nRep))
+      colnames(df)<- c("size", "estimate", "bias", "var", "mse", "coverYes", "Rindicator", "IMB")
+      scenarioResult<- list(df, df, df, df, df)
+      settings<- c("fullSample", "respondent", "postOnly", "adaptOnly", "adaptPost") #counterfactual methods
+      names(scenarioResult)<- settings
+      
+      #initiating dataframe to store evaluation results
+      evaluScenarioResult<- data.frame(matrix(ncol= 3, nrow= nRep))
+      colnames(evaluScenarioResult)<- c("s2_quartile_classifi_accu", "s1_pseudoR2", "s1_auroc")
+      
+      
+      if (loop[i] %in% c("A", "Aomit1", "A_probit", "Aomit1_probit")){
+        dat$Rlogit<- b0.R+
+                     b1.R*dat$X1+
+                     b2.R*dat$X2+
+                     b3.R*dat$X3+
+                     b4.R*dat$X4
+      } else if (loop[i]%in% c("B", "Bomit1", "B_probit", "Bomit1_probit")){
+        dat$Rlogit<- b0.R+
+                     b1.R*dat$X1+
+                     b2.R*dat$X2+
+                     b3.R*dat$X3+
+                     b4.R*dat$X4+
+                     b2.R*dat$X2*dat$X2+
+                     b1.R*0.2*dat$X1*dat$X3+
+                     b2.R*0.5*dat$X2*dat$X4+
+                     b1.R*0.2*dat$X1*dat$X2
+      } else if (loop[i]%in% c("C", "Comit1", "C_probit", "Comit1_probit")){
+        dat$Rlogit<- b0.R+
+                     b1.R*dat$X1+
+                     b2.R*dat$X2+
+                     b3.R*dat$X3+
+                     b4.R*dat$X4+
+                     b2.R*dat$X2*dat$X2+
+                     b4.R*dat$X4*dat$X4+
+                     b1.R*0.5*dat$X1*dat$X3+
+                     b1.R*0.5*dat$X1*dat$X4+
+                     b2.R*0.5*dat$X2*dat$X3+
+                     b2.R*0.5*dat$X2*dat$X4+
+                     b3.R*0.5*dat$X3*dat$X4
+      } 
+      
+      dat$RRP<- exp(dat$Rlogit)/(1+ exp(dat$Rlogit)) # population response mechanism
+      set.seed(9001)
+      dat$respondent<- as.numeric(dat$RRP>= runif(N)) # population respondents/nonrespondents
+      
+      for (r in 1:nRep){
+      
+        #====================Reference sample==================
+        set.seed(r)
+        s1_index<- sample.int(N, size= n1, replace= FALSE) 
+        s1<- dat[s1_index, ]
+        
+        # fit response propensity model on sample 1
+        if (loop[i] %in% c("A", "B", "C")){
+          glm_esti<- glm(respondent~ X1+ X2+ X3+ X4, data= s1, family= "binomial")
+        } else if (loop[i]%in% c("Aomit1", "Bomit1", "Comit1")){
+          glm_esti<- glm(respondent~     X2+ X3+ X4, data= s1, family= "binomial")
+        } else if (loop[i] %in% c("A_probit", "B_probit", "C_probit")){
+          glm_esti<- glm(respondent~ X1+ X2+ X3+ X4, data= s1, family= "binomial"(link= "probit"))
+        } else if (loop[i]%in% c("Aomit1_probit", "Bomit1_probit", "Comit1_probit")){
+          glm_esti<- glm(respondent~     X2+ X3+ X4, data= s1, family= "binomial"(link= "probit"))
+        } 
+        
+        R2<- PseudoR2(glm_esti)
+        RRP_predict<- predict(glm_esti, type= "response")
+        auROC<- roc(respondent~ RRP_predict, data= s1)
+        
+        evaluScenarioResult[r,]$s1_pseudoR2<- R2
+        evaluScenarioResult[r,]$s1_auroc<- auROC$auc
+        
+      
+        #====================Current sample - Full sample estimate================== 
+        set.seed(r+11111)
+        s2_index<- sample.int(N, size= n2, replace= FALSE) 
+        s2<- dat[s2_index, ]
+        
+        s2meanY<- mean(s2$Y) 
+        s2seY<- sqrt(var(s2$Y)/n2)
+        
+        size<- n2
+        mean<- s2meanY
+        bias<- mean- trueY
+        var<- var(s2$Y)/n2
+        se<- s2seY
+        mse<- bias^2+ var
+        
+        ci_low<- mean- 1.96*se #is the estimated CI covering the true Y?
+        ci_high<- mean+ 1.96*se
+        coverYes<- sum((ci_low<= trueY) & (trueY<= ci_high))
+        
+        X<- s2[c("X1", "X2", "X3", "X4")] #for computing IMB in the scenarios below
+        full_sample_Xbar<- colMeans(s2[c("X1", "X2", "X3", "X4")])%>% as.data.frame()
+        full_sample_covariance<- (as.matrix(t(X))%*% as.matrix(X))/nrow(X)
+      
+        Rindicator<- NA
+        IMB<- NA
+        
+        scenarioResult$fullSample[r,]<- data.frame(size, mean, bias, var, mse, coverYes, Rindicator, IMB)
+      
+      
+        #====================Current sample - Respondent estimate (homogeneous recruitment with no adjustment)==================
+        s2$inc<- B/n2 # Simulate a homogeneous recruitment protocol 
+        
+        set.seed(r)
+        epsilon<- rnorm(n2, mean= 0, sd= 0.01)
+        s2$D<- alpha*log(1+s2$inc)+ gamma* log(1+s2$inc)* s2$RRP+ epsilon
+        
+        #Adjust response propensity by D
+        s2$RRP_final<- s2$RRP+ s2$D
+        
+        set.seed(r)
+        s2$respondent_homo<- as.numeric(s2$RRP_final>= runif(n2))
+        
+        raw_mean<- mean(s2[s2$respondent_homo==1, ]$Y)
+        raw_se<- sqrt(var(s2[s2$respondent_homo==1, ]$Y)/sum(s2$respondent_homo))
+        
+        size<- dim(s2[s2$respondent_homo==1, ])[1]
+        mean<- raw_mean
+        bias<- mean- trueY
+        se<- raw_se
+        var<- se^2
+        mse<- bias^2+ var
+        
+        ci_low<- mean- 1.96*se
+        ci_high<- mean+ 1.96*se
+        coverYes<- sum((ci_low<= trueY) & (trueY<= ci_high))
+        
+        #computing R-indicator
+        glm_Rindcator<- glm(respondent_homo~ X1+ X2+ X3+ X4, data= s2, family= "binomial")
+        propensities<- predict(glm_Rindcator, data= s2, type= "response")
+        Rindicator<- 1-2*sd(propensities)
+        #computing IMB
+        design_IMB<- svydesign(id=~1, weights= NULL,
+                               data= s2[s2$respondent_homo==1,])
+        Xbar<- as.matrix(svymean(~X1+ X2+ X3+ X4, design_IMB))
+        P<- nrow(s2[s2$respondent_homo==1,])/nrow(s2)
+        IMB<- 100*P^2*as.matrix(t((Xbar- full_sample_Xbar))%*% solve(full_sample_covariance))%*% as.matrix(Xbar- full_sample_Xbar)
+        IMB<- as.numeric(IMB)
+        scenarioResult$respondent[r,]<- data.frame(size, mean, bias, var, mse, coverYes, Rindicator, IMB)
+        
+        #====================Current sample - Post-survey adjustment only estimate ==================
+        
+        # fit response propensity model on sample 2
+        if (loop[i] %in% c("A", "B", "C")){
+          s2glm<- glm(respondent_homo~ X1+ X2+ X3+ X4, data= s2, family= "binomial")
+        } else if (loop[i]%in% c("Aomit1", "Bomit1", "Comit1")){
+          s2glm<- glm(respondent_homo~     X2+ X3+ X4, data= s2, family= "binomial")
+        } else if (loop[i] %in% c("A_probit", "B_probit", "C_probit")){
+          s2glm<- glm(respondent_homo~ X1+ X2+ X3+ X4, data= s2, family= "binomial"(link= "probit"))
+        } else if (loop[i]%in% c("Aomit1_probit", "Bomit1_probit", "Comit1_probit")){
+          s2glm<- glm(respondent_homo~     X2+ X3+ X4, data= s2, family= "binomial"(link= "probit"))
+        } 
+        
+        s2$RRP_estim<- predict(s2glm, type= "response")
+        
+        s2$wt<- 1/s2$RRP_estim #Weight option 1: inverse propensity weights
+        #Categorize weightings into percentile and take median of the percentile
+        s2$wt_percentile<- ntile(s2$wt, 100) #
+        s2<- s2%>% 
+          dplyr::group_by(wt_percentile)%>%
+          dplyr::mutate(wt_median= median(wt))
+        s2$wt<- s2$wt_median #Weight option 2: (replace option 1) weights as the percentile median
+        
+        svydesign<- svydesign(id=~1, weights=s2[s2$respondent_homo==1,]$wt, 
+                                 data= s2[s2$respondent_homo==1,])
+        svymean<- svymean(s2[s2$respondent_homo==1,]$Y, svydesign)
+        
+        size<- dim(s2[s2$respondent_homo==1, ])[1]
+        mean<- coef(svymean)
+        bias<- mean- trueY
+        se<- SE(svymean)
+        var<- se^2
+        mse<- bias^2+ var
+        
+        ci_low<- mean- 1.96*se
+        ci_high<- mean+ 1.96*se
+        coverYes<- sum((ci_low<= trueY) & (trueY<= ci_high))
+        
+        #computing R-indicator
+        glm_Rindcator<- glm(respondent_homo~ X1+ X2+ X3+ X4, data= s2, family= "binomial")
+        propensities<- predict(glm_Rindcator, data= s2, type= "response")
+        Rindicator<- 1-2*sd(propensities)
+        #computing IMB
+        design_IMB<- svydesign(id=~1, weights= s2[s2$respondent_homo==1,]$wt,
+                               data= s2[s2$respondent_homo==1,])
+        Xbar<- as.matrix(svymean(~X1+ X2+ X3+ X4, design_IMB))
+        P<- nrow(s2[s2$respondent_homo==1,])/nrow(s2)
+        IMB<- 100*P^2*as.matrix(t((Xbar- full_sample_Xbar))%*% solve(full_sample_covariance))%*% as.matrix(Xbar- full_sample_Xbar)
+        IMB<- as.numeric(IMB)
+        
+        scenarioResult$postOnly[r,]<- data.frame(size, mean, bias, var, mse, coverYes, Rindicator, IMB)
+        
+        
+        #========Current sample: Only Adaptive design ====
+        #Addptively assigning incentives based on estimated response propensities
+        s2$RRP_predict<- predict(glm_esti, s2, type= "response")
+        
+        if (allocation[a]== "cat"){
+          s2$quartile_predict<- ntile(s2$RRP_predict, 4)
+          s2$inc<- 0
+          s2[s2$quartile_predict== 1,]$inc<- B* 4/(4+3+2+1) *1/dim(s2[s2$quartile_predict== 1,])[1]
+          s2[s2$quartile_predict== 2,]$inc<- B* 3/(4+3+2+1) *1/dim(s2[s2$quartile_predict== 2,])[1]
+          s2[s2$quartile_predict== 3,]$inc<- B* 2/(4+3+2+1) *1/dim(s2[s2$quartile_predict== 3,])[1]
+          s2[s2$quartile_predict== 4,]$inc<- B* 1/(4+3+2+1) *1/dim(s2[s2$quartile_predict== 4,])[1]
+        } else if (allocation[a]== "lin"){
+          s2$inc<- B* (max(s2$RRP_predict)-s2$RRP_predict)/sum((max(s2$RRP_predict)-s2$RRP_predict))
+        }
+        
+        set.seed(r)
+        epsilon<- rnorm(n2, mean= 0, sd= 0.01)
+        s2$D<- alpha*log(1+s2$inc)+ gamma* log(1+s2$inc)* s2$RRP+ epsilon
+        
+        #Adjust response propensity by D
+        s2$RRP_final<- s2$RRP+ s2$D
+        
+        set.seed(i) 
+        s2$respondent_adapt<- as.numeric(s2$RRP_final>= runif(n2))
+        
+        
+        adapt_mean<- mean(s2[s2$respondent_adapt==1, ]$Y)
+        adapt_se<- sqrt(var(s2[s2$respondent_adapt==1, ]$Y)/sum(s2$respondent_adapt))
+        
+        
+        size<- dim(s2[s2$respondent_adapt==1,])[1]
+        estimate<- adapt_mean
+        bias<- adapt_mean- trueY
+        se<- adapt_se
+        var<- se^2
+        mse<- bias^2+ var
+        
+        ci_low<- mean- 1.96*se
+        ci_high<- mean+ 1.96*se
+        coverYes<- sum((ci_low<= trueY) & (trueY<= ci_high))
+        
+        #computing R-indicator
+        glm_Rindcator<- glm(respondent_adapt~ X1+ X2+ X3+ X4, data= s2, family= "binomial")
+        propensities<- predict(glm_Rindcator, data= s2, type= "response")
+        Rindicator<- 1-2*sd(propensities)
+        #computing IMB
+        design_IMB<- svydesign(id=~1, weights= NULL,
+                               data= s2[s2$respondent_adapt==1,])
+        Xbar<- as.matrix(svymean(~X1+ X2+ X3+ X4, design_IMB))
+        P<- nrow(s2[s2$respondent_adapt==1,])/nrow(s2)
+        IMB<- 100*P^2*as.matrix(t((Xbar- full_sample_Xbar))%*% solve(full_sample_covariance))%*% as.matrix(Xbar- full_sample_Xbar)
+        IMB<- as.numeric(IMB)
+        
+        scenarioResult$adaptOnly[r,]<- data.frame(size, estimate, bias, var, mse, coverYes, Rindicator, IMB)
+        
+      
+        #========Current sample: Adaptive design + Post-survey adjustment====
+        #Addptively assigning incentives based on estimated response propensities
+        s2$RRP_predict<- predict(glm_esti, s2, type= "response")
+        
+        if (allocation[a]== "cat"){
+          s2$quartile_predict<- ntile(s2$RRP_predict, 4)
+          s2$inc<- 0
+          s2[s2$quartile_predict== 1,]$inc<- B* 4/(4+3+2+1) *1/dim(s2[s2$quartile_predict== 1,])[1]
+          s2[s2$quartile_predict== 2,]$inc<- B* 3/(4+3+2+1) *1/dim(s2[s2$quartile_predict== 2,])[1]
+          s2[s2$quartile_predict== 3,]$inc<- B* 2/(4+3+2+1) *1/dim(s2[s2$quartile_predict== 3,])[1]
+          s2[s2$quartile_predict== 4,]$inc<- B* 1/(4+3+2+1) *1/dim(s2[s2$quartile_predict== 4,])[1]
+          
+          #Side track: how good is the predicted quartile grouping?
+          s2$quartile_true<- ntile(s2$RRP, 4)
+          s2_quartile_classifi_accu<- round(sum(s2$quartile_predict== s2$quartile_true)/n2*100, 1)
+          evaluScenarioResult[r,]$s2_quartile_classifi_accu<- s2_quartile_classifi_accu
+        } else if (allocation[a]== "lin"){
+          s2$inc<- B* (max(s2$RRP_predict)-s2$RRP_predict)/sum((max(s2$RRP_predict)-s2$RRP_predict))
+          
+          #Side track: how good is the predicted quartile grouping?
+          evaluScenarioResult[r,]$s2_quartile_classifi_accu<- NA
+        }
+      
+        
+        set.seed(r)
+        epsilon<- rnorm(n2, mean= 0, sd= 0.01)
+        s2$D<- alpha*log(1+s2$inc)+ gamma* log(1+s2$inc)* s2$RRP+ epsilon
+        
+        #Adjust response propensity by D
+        s2$RRP_final<- s2$RRP+ s2$D
+        
+        set.seed(i) 
+        s2$respondent_adapt<- as.numeric(s2$RRP_final>= runif(n2))
+        
+        #Perform post-survey adjustment after adaptive designs
+        if (loop[i] %in% c("A", "B", "C")){
+          s2glm_adapt<- glm(respondent_adapt~ X1+ X2+ X3+ X4, data= s2, family= "binomial")
+        } else if (loop[i]%in% c("Aomit1", "Bomit1", "Comit1")){
+          s2glm_adapt<- glm(respondent_adapt~     X2+ X3+ X4, data= s2, family= "binomial")
+        } else if (loop[i] %in% c("A_probit", "B_probit", "C_probit")){
+          s2glm_adapt<- glm(respondent_adapt~ X1+ X2+ X3+ X4, data= s2, family= "binomial"(link= "probit"))
+        } else if (loop[i]%in% c("Aomit1_probit", "Bomit1_probit", "Comit1_probit")){
+          s2glm_adapt<- glm(respondent_adapt~     X2+ X3+ X4, data= s2, family= "binomial"(link= "probit"))
+        } 
+        
+        
+        s2$RRP_adapt_estimPost<- predict(s2glm_adapt, type= "response")
+        
+        s2$wt<- 1/s2$RRP_adapt_estimPost#Weight option 1: inverse propensity weights
+        #Categorize weightings into percentile and take median of the percentile
+        s2$wt_percentile<- ntile(s2$wt, 100) #
+        s2<- s2%>% 
+          dplyr::group_by(wt_percentile)%>%
+          dplyr::mutate(wt_median= median(wt))
+        s2$wt<- s2$wt_median #Weight option 2: (replace option 1) weights as the percentile median
+        
+        svym<- svymean(s2[s2$respondent_adapt==1,]$Y, 
+                          svydesign(id=~1,weights= s2[s2$respondent_adapt==1,]$wt, 
+                          data= s2[s2$respondent_adapt==1,]))
+        
+        size<- dim(s2[s2$respondent_adapt==1,])[1]
+        estimate<- coef(svym)
+        bias<- coef(svym)- trueY
+        se<- SE(svym)
+        var<- se^2
+        mse<- bias^2+ var
+        
+        ci_low<- mean- 1.96*se
+        ci_high<- mean+ 1.96*se
+        coverYes<- sum((ci_low<= trueY) & (trueY<= ci_high))
+        
+        #computing R-indicator
+        glm_Rindcator<- glm(respondent_adapt~ X1+ X2+ X3+ X4, data= s2, family= "binomial")
+        propensities<- predict(glm_Rindcator, data= s2, type= "response")
+        Rindicator<- 1-2*sd(propensities)
+        #computing IMB
+        design_IMB<- svydesign(id=~1, weights= s2[s2$respondent_adapt==1,]$wt,
+                               data= s2[s2$respondent_adapt==1,])
+        Xbar<- as.matrix(svymean(~X1+ X2+ X3+ X4, design_IMB))
+        P<- nrow(s2[s2$respondent_adapt==1,])/nrow(s2)
+        IMB<- 100*P^2*as.matrix(t((Xbar- full_sample_Xbar))%*% solve(full_sample_covariance))%*% as.matrix(Xbar- full_sample_Xbar)
+        IMB<- as.numeric(IMB)
+        
+        scenarioResult$adaptPost[r,]<- data.frame(size, estimate, bias, var, mse, coverYes, Rindicator, IMB)
+      }
+      resultList[[i]]<- scenarioResult
+      evaluationList[[i]]<- evaluScenarioResult
+    }  
+    resultList_coef[[c]]<- resultList
+    evaluationList_coef[[c]]<- evaluationList
+  }
+  resultList_coef_allo[[a]]<- resultList_coef
+  evaluationList_coef_allo[[a]]<- evaluationList_coef
+}
+@
+
+Results Table 2
+
+<<Simplified Table 2: categorical allocation. Left: mediocre effect; right: good effect>>=
+resultList<- resultList_coef_allo$cat$medi
+TB_lef<- data.frame()
+for (i in 1:length(loop)){
+  
+  respondent_n<- round(mean(resultList[[i]]$respondent$size), 7)
+  respondent_bias<- round(mean(resultList[[i]]$respondent$bias), 7)
+  respondent_var<- round(var(resultList[[i]]$respondent$estimate), 7)
+  respondent_mse<- round(respondent_bias^2+ respondent_var, 7)
+  respondent_coverage<- round(sum(resultList[[i]]$respondent$coverYes)/nRep*100, 2)
+  respondent_Rindicator<- round(mean(resultList[[i]]$respondent$Rindicator), 7)
+  respondent_IMB<- round(mean(resultList[[i]]$respondent$IMB), 7)
+  
+  postOnly_n<- round(mean(resultList[[i]]$postOnly$size), 7)
+  postOnly_bias<- round(mean(resultList[[i]]$postOnly$bias), 7)
+  postOnly_var<- round(var(resultList[[i]]$postOnly$estimate), 7)
+  postOnly_mse<- round(postOnly_bias^2+ postOnly_var, 7)
+  postOnly_coverage<- round(sum(resultList[[i]]$postOnly$coverYes)/nRep*100, 2)
+  postOnly_Rindicator<- round(mean(resultList[[i]]$postOnly$Rindicator), 7)
+  postOnly_IMB<- round(mean(resultList[[i]]$postOnly$IMB), 7)
+  
+  adaptOnly_n<- round(mean(resultList[[i]]$adaptOnly$size), 7)
+  adaptOnly_bias<- round(mean(resultList[[i]]$adaptOnly$bias), 7)
+  adaptOnly_var<- round(var(resultList[[i]]$adaptOnly$estimate), 7)
+  adaptOnly_mse<- round(adaptOnly_bias^2+ adaptOnly_var, 7)
+  adaptOnly_coverage<- round(sum(resultList[[i]]$adaptOnly$coverYes)/nRep*100, 2)
+  adaptOnly_Rindicator<- round(mean(resultList[[i]]$adaptOnly$Rindicator), 7)
+  adaptOnly_IMB<- round(mean(resultList[[i]]$adaptOnly$IMB), 7)
+  
+  adaptPost_n<- round(mean(resultList[[i]]$adaptPost$size), 7)
+  adaptPost_bias<- round(mean(resultList[[i]]$adaptPost$bias), 7)
+  adaptPost_var<- round(var(resultList[[i]]$adaptPost$estimate), 7)
+  adaptPost_mse<- round(adaptPost_bias^2+ adaptPost_var, 7)
+  adaptPost_coverage<- round(sum(resultList[[i]]$adaptPost$coverYes)/nRep*100, 2)
+  adaptPost_Rindicator<- round(mean(resultList[[i]]$adaptPost$Rindicator), 7)
+  adaptPost_IMB<- round(mean(resultList[[i]]$adaptPost$IMB), 7)
+  
+  #diff_bias<- sum(abs(resultList[[i]]$adaptPost$bias)< abs(resultList[[i]]$postOnly$bias))
+  #diff_var<- sum(resultList[[i]]$adaptPost$var< resultList[[i]]$postOnly$var)
+  #diff_mse<- sum(resultList[[i]]$adaptPost$mse< resultList[[i]]$postOnly$mse)
+  
+  rows<- data.frame("setting"= c(loop[i], loop[i], loop[i], loop[i]),
+             "method"= c("respondent", "PostOnly", "AdaptOnly", "Adapt+Post"), 
+             "n"= c(respondent_n, postOnly_n, adaptOnly_n, adaptPost_n),
+             "bias"= c(respondent_bias, postOnly_bias, adaptOnly_bias, adaptPost_bias),
+             "variance"= c(respondent_var, postOnly_var, adaptOnly_var, adaptPost_var),
+             "mse"= c(respondent_mse, postOnly_mse, adaptOnly_mse, adaptPost_mse),
+             "ciCoverage"= c(respondent_coverage, postOnly_coverage, adaptOnly_coverage, adaptPost_coverage),
+             "Rindicator"= c(respondent_Rindicator, postOnly_Rindicator, adaptOnly_Rindicator, adaptPost_Rindicator),
+             "IMB"= c(respondent_IMB, postOnly_IMB, adaptOnly_IMB, adaptPost_IMB))
+  
+  TB_lef<- rbind(TB_lef, rows)
+  
+}
+
+benefit_lef<- TB_lef %>%
+  dplyr::group_by(setting) %>%
+  dplyr::filter(method %in% c("PostOnly", "Adapt+Post")) %>%
+  dplyr::summarise(benefitBias= (abs(first(bias))- abs(last(bias)))/abs(first(bias)),
+            benefitVar= (first(variance)- last(variance))/first(variance),
+            benefitMse= (first(mse)- last(mse))/first(mse),
+            benefitR= first(Rindicator)- last(Rindicator),
+            benefitIMB= first(IMB)- last(IMB))
+  
+benefit_lef$benefitBias<- round(benefit_lef$benefitBias*100, 1)
+benefit_lef$benefitVar<- round(benefit_lef$benefitVar*100, 1)
+benefit_lef$benefitMse<- round(benefit_lef$benefitMse*100, 1)
+benefit_lef$benefitR<- round(benefit_lef$benefitR, 6)
+benefit_lef$benefitIMB<- round(benefit_lef$benefitIMB, 6)
+
+
+resultList<- resultList_coef_allo$cat$good
+TB_rig<- data.frame()
+for (i in 1:length(loop)){
+  
+  respondent_n<- round(mean(resultList[[i]]$respondent$size), 7)
+  respondent_bias<- round(mean(resultList[[i]]$respondent$bias), 7)
+  respondent_var<- round(var(resultList[[i]]$respondent$estimate), 7)
+  respondent_mse<- round(respondent_bias^2+ respondent_var, 7)
+  respondent_coverage<- round(sum(resultList[[i]]$respondent$coverYes)/nRep*100, 2)
+  respondent_Rindicator<- round(mean(resultList[[i]]$respondent$Rindicator), 7)
+  respondent_IMB<- round(mean(resultList[[i]]$respondent$IMB), 7)
+  
+  postOnly_n<- round(mean(resultList[[i]]$postOnly$size), 7)
+  postOnly_bias<- round(mean(resultList[[i]]$postOnly$bias), 7)
+  postOnly_var<- round(var(resultList[[i]]$postOnly$estimate), 7)
+  postOnly_mse<- round(postOnly_bias^2+ postOnly_var, 7)
+  postOnly_coverage<- round(sum(resultList[[i]]$postOnly$coverYes)/nRep*100, 2)
+  postOnly_Rindicator<- round(mean(resultList[[i]]$postOnly$Rindicator), 7)
+  postOnly_IMB<- round(mean(resultList[[i]]$postOnly$IMB), 7)
+  
+  adaptOnly_n<- round(mean(resultList[[i]]$adaptOnly$size), 7)
+  adaptOnly_bias<- round(mean(resultList[[i]]$adaptOnly$bias), 7)
+  adaptOnly_var<- round(var(resultList[[i]]$adaptOnly$estimate), 7)
+  adaptOnly_mse<- round(adaptOnly_bias^2+ adaptOnly_var, 7)
+  adaptOnly_coverage<- round(sum(resultList[[i]]$adaptOnly$coverYes)/nRep*100, 2)
+  adaptOnly_Rindicator<- round(mean(resultList[[i]]$adaptOnly$Rindicator), 7)
+  adaptOnly_IMB<- round(mean(resultList[[i]]$adaptOnly$IMB), 7)
+  
+  adaptPost_n<- round(mean(resultList[[i]]$adaptPost$size), 7)
+  adaptPost_bias<- round(mean(resultList[[i]]$adaptPost$bias), 7)
+  adaptPost_var<- round(var(resultList[[i]]$adaptPost$estimate), 7)
+  adaptPost_mse<- round(adaptPost_bias^2+ adaptPost_var, 7)
+  adaptPost_coverage<- round(sum(resultList[[i]]$adaptPost$coverYes)/nRep*100, 2)
+  adaptPost_Rindicator<- round(mean(resultList[[i]]$adaptPost$Rindicator), 7)
+  adaptPost_IMB<- round(mean(resultList[[i]]$adaptPost$IMB), 7)
+  
+  #diff_bias<- sum(abs(resultList[[i]]$adaptPost$bias)< abs(resultList[[i]]$postOnly$bias))
+  #diff_var<- sum(resultList[[i]]$adaptPost$var< resultList[[i]]$postOnly$var)
+  #diff_mse<- sum(resultList[[i]]$adaptPost$mse< resultList[[i]]$postOnly$mse)
+  
+  rows<- data.frame("setting"= c(loop[i], loop[i], loop[i], loop[i]),
+             "method"= c("respondent", "PostOnly", "AdaptOnly", "Adapt+Post"), 
+             "n"= c(respondent_n, postOnly_n, adaptOnly_n, adaptPost_n),
+             "bias"= c(respondent_bias, postOnly_bias, adaptOnly_bias, adaptPost_bias),
+             "variance"= c(respondent_var, postOnly_var, adaptOnly_var, adaptPost_var),
+             "mse"= c(respondent_mse, postOnly_mse, adaptOnly_mse, adaptPost_mse),
+             "ciCoverage"= c(respondent_coverage, postOnly_coverage, adaptOnly_coverage, adaptPost_coverage),
+             "Rindicator"= c(respondent_Rindicator, postOnly_Rindicator, adaptOnly_Rindicator, adaptPost_Rindicator),
+             "IMB"= c(respondent_IMB, postOnly_IMB, adaptOnly_IMB, adaptPost_IMB))
+  
+  TB_rig<- rbind(TB_rig, rows)
+  
+}
+
+benefit_rig<- TB_rig %>%
+  dplyr::group_by(setting) %>%
+  dplyr::filter(method %in% c("PostOnly", "Adapt+Post")) %>%
+  dplyr::summarise(benefitBias= (abs(first(bias))- abs(last(bias)))/abs(first(bias)),
+            benefitVar= (first(variance)- last(variance))/first(variance),
+            benefitMse= (first(mse)- last(mse))/first(mse),
+            benefitR= first(Rindicator)- last(Rindicator),
+            benefitIMB= first(IMB)- last(IMB))
+  
+benefit_rig$benefitBias<- round(benefit_rig$benefitBias*100, 1)
+benefit_rig$benefitVar<- round(benefit_rig$benefitVar*100, 1)
+benefit_rig$benefitMse<- round(benefit_rig$benefitMse*100, 1)
+benefit_rig$benefitR<- round(benefit_rig$benefitR, 6)
+benefit_rig$benefitIMB<- round(benefit_rig$benefitIMB, 6)
+
+
+write.csv(TB_lef, "TB_lef_cat.csv")
+write.csv(TB_rig, "TB_rig_cat.csv")
+write.csv(benefit_lef, "benefit_lef_cat.csv")
+write.csv(benefit_rig, "benefit_rig_cat.csv")
+
+@
+
+
+Results Table 3
+
+<<Simplified Table 3: linear allocation. Left: mediocre effect; right: good effect>>=
+resultList<- resultList_coef_allo$lin$medi
+TB_lef<- data.frame()
+for (i in 1:length(loop)){
+  
+  respondent_n<- round(mean(resultList[[i]]$respondent$size), 7)
+  respondent_bias<- round(mean(resultList[[i]]$respondent$bias), 7)
+  respondent_var<- round(var(resultList[[i]]$respondent$estimate), 7)
+  respondent_mse<- round(respondent_bias^2+ respondent_var, 7)
+  respondent_coverage<- round(sum(resultList[[i]]$respondent$coverYes)/nRep*100, 2)
+  respondent_Rindicator<- round(mean(resultList[[i]]$respondent$Rindicator), 7)
+  respondent_IMB<- round(mean(resultList[[i]]$respondent$IMB), 7)
+  
+  postOnly_n<- round(mean(resultList[[i]]$postOnly$size), 7)
+  postOnly_bias<- round(mean(resultList[[i]]$postOnly$bias), 7)
+  postOnly_var<- round(var(resultList[[i]]$postOnly$estimate), 7)
+  postOnly_mse<- round(postOnly_bias^2+ postOnly_var, 7)
+  postOnly_coverage<- round(sum(resultList[[i]]$postOnly$coverYes)/nRep*100, 2)
+  postOnly_Rindicator<- round(mean(resultList[[i]]$postOnly$Rindicator), 7)
+  postOnly_IMB<- round(mean(resultList[[i]]$postOnly$IMB), 7)
+  
+  adaptOnly_n<- round(mean(resultList[[i]]$adaptOnly$size), 7)
+  adaptOnly_bias<- round(mean(resultList[[i]]$adaptOnly$bias), 7)
+  adaptOnly_var<- round(var(resultList[[i]]$adaptOnly$estimate), 7)
+  adaptOnly_mse<- round(adaptOnly_bias^2+ adaptOnly_var, 7)
+  adaptOnly_coverage<- round(sum(resultList[[i]]$adaptOnly$coverYes)/nRep*100, 2)
+  adaptOnly_Rindicator<- round(mean(resultList[[i]]$adaptOnly$Rindicator), 7)
+  adaptOnly_IMB<- round(mean(resultList[[i]]$adaptOnly$IMB), 7)
+  
+  adaptPost_n<- round(mean(resultList[[i]]$adaptPost$size), 7)
+  adaptPost_bias<- round(mean(resultList[[i]]$adaptPost$bias), 7)
+  adaptPost_var<- round(var(resultList[[i]]$adaptPost$estimate), 7)
+  adaptPost_mse<- round(adaptPost_bias^2+ adaptPost_var, 7)
+  adaptPost_coverage<- round(sum(resultList[[i]]$adaptPost$coverYes)/nRep*100, 2)
+  adaptPost_Rindicator<- round(mean(resultList[[i]]$adaptPost$Rindicator), 7)
+  adaptPost_IMB<- round(mean(resultList[[i]]$adaptPost$IMB), 7)
+  
+  #diff_bias<- sum(abs(resultList[[i]]$adaptPost$bias)< abs(resultList[[i]]$postOnly$bias))
+  #diff_var<- sum(resultList[[i]]$adaptPost$var< resultList[[i]]$postOnly$var)
+  #diff_mse<- sum(resultList[[i]]$adaptPost$mse< resultList[[i]]$postOnly$mse)
+  
+  rows<- data.frame("setting"= c(loop[i], loop[i], loop[i], loop[i]),
+             "method"= c("respondent", "PostOnly", "AdaptOnly", "Adapt+Post"), 
+             "n"= c(respondent_n, postOnly_n, adaptOnly_n, adaptPost_n),
+             "bias"= c(respondent_bias, postOnly_bias, adaptOnly_bias, adaptPost_bias),
+             "variance"= c(respondent_var, postOnly_var, adaptOnly_var, adaptPost_var),
+             "mse"= c(respondent_mse, postOnly_mse, adaptOnly_mse, adaptPost_mse),
+             "ciCoverage"= c(respondent_coverage, postOnly_coverage, adaptOnly_coverage, adaptPost_coverage),
+             "Rindicator"= c(respondent_Rindicator, postOnly_Rindicator, adaptOnly_Rindicator, adaptPost_Rindicator),
+             "IMB"= c(respondent_IMB, postOnly_IMB, adaptOnly_IMB, adaptPost_IMB))
+  
+  TB_lef<- rbind(TB_lef, rows)
+  
+}
+
+benefit_lef<- TB_lef %>%
+  dplyr::group_by(setting) %>%
+  dplyr::filter(method %in% c("PostOnly", "Adapt+Post")) %>%
+  dplyr::summarise(benefitBias= (abs(first(bias))- abs(last(bias)))/abs(first(bias)),
+            benefitVar= (first(variance)- last(variance))/first(variance),
+            benefitMse= (first(mse)- last(mse))/first(mse),
+            benefitR= first(Rindicator)- last(Rindicator),
+            benefitIMB= first(IMB)- last(IMB))
+  
+benefit_lef$benefitBias<- round(benefit_lef$benefitBias*100, 1)
+benefit_lef$benefitVar<- round(benefit_lef$benefitVar*100, 1)
+benefit_lef$benefitMse<- round(benefit_lef$benefitMse*100, 1)
+benefit_lef$benefitR<- round(benefit_lef$benefitR, 6)
+benefit_lef$benefitIMB<- round(benefit_lef$benefitIMB, 6)
+
+
+resultList<- resultList_coef_allo$lin$good
+TB_rig<- data.frame()
+for (i in 1:length(loop)){
+  
+  respondent_n<- round(mean(resultList[[i]]$respondent$size), 7)
+  respondent_bias<- round(mean(resultList[[i]]$respondent$bias), 7)
+  respondent_var<- round(var(resultList[[i]]$respondent$estimate), 7)
+  respondent_mse<- round(respondent_bias^2+ respondent_var, 7)
+  respondent_coverage<- round(sum(resultList[[i]]$respondent$coverYes)/nRep*100, 2)
+  respondent_Rindicator<- round(mean(resultList[[i]]$respondent$Rindicator), 7)
+  respondent_IMB<- round(mean(resultList[[i]]$respondent$IMB), 7)
+  
+  postOnly_n<- round(mean(resultList[[i]]$postOnly$size), 7)
+  postOnly_bias<- round(mean(resultList[[i]]$postOnly$bias), 7)
+  postOnly_var<- round(var(resultList[[i]]$postOnly$estimate), 7)
+  postOnly_mse<- round(postOnly_bias^2+ postOnly_var, 7)
+  postOnly_coverage<- round(sum(resultList[[i]]$postOnly$coverYes)/nRep*100, 2)
+  postOnly_Rindicator<- round(mean(resultList[[i]]$postOnly$Rindicator), 7)
+  postOnly_IMB<- round(mean(resultList[[i]]$postOnly$IMB), 7)
+  
+  adaptOnly_n<- round(mean(resultList[[i]]$adaptOnly$size), 7)
+  adaptOnly_bias<- round(mean(resultList[[i]]$adaptOnly$bias), 7)
+  adaptOnly_var<- round(var(resultList[[i]]$adaptOnly$estimate), 7)
+  adaptOnly_mse<- round(adaptOnly_bias^2+ adaptOnly_var, 7)
+  adaptOnly_coverage<- round(sum(resultList[[i]]$adaptOnly$coverYes)/nRep*100, 2)
+  adaptOnly_Rindicator<- round(mean(resultList[[i]]$adaptOnly$Rindicator), 7)
+  adaptOnly_IMB<- round(mean(resultList[[i]]$adaptOnly$IMB), 7)
+  
+  adaptPost_n<- round(mean(resultList[[i]]$adaptPost$size), 7)
+  adaptPost_bias<- round(mean(resultList[[i]]$adaptPost$bias), 7)
+  adaptPost_var<- round(var(resultList[[i]]$adaptPost$estimate), 7)
+  adaptPost_mse<- round(adaptPost_bias^2+ adaptPost_var, 7)
+  adaptPost_coverage<- round(sum(resultList[[i]]$adaptPost$coverYes)/nRep*100, 2)
+  adaptPost_Rindicator<- round(mean(resultList[[i]]$adaptPost$Rindicator), 7)
+  adaptPost_IMB<- round(mean(resultList[[i]]$adaptPost$IMB), 7)
+  
+  #diff_bias<- sum(abs(resultList[[i]]$adaptPost$bias)< abs(resultList[[i]]$postOnly$bias))
+  #diff_var<- sum(resultList[[i]]$adaptPost$var< resultList[[i]]$postOnly$var)
+  #diff_mse<- sum(resultList[[i]]$adaptPost$mse< resultList[[i]]$postOnly$mse)
+  
+  rows<- data.frame("setting"= c(loop[i], loop[i], loop[i], loop[i]),
+             "method"= c("respondent", "PostOnly", "AdaptOnly", "Adapt+Post"), 
+             "n"= c(respondent_n, postOnly_n, adaptOnly_n, adaptPost_n),
+             "bias"= c(respondent_bias, postOnly_bias, adaptOnly_bias, adaptPost_bias),
+             "variance"= c(respondent_var, postOnly_var, adaptOnly_var, adaptPost_var),
+             "mse"= c(respondent_mse, postOnly_mse, adaptOnly_mse, adaptPost_mse),
+             "ciCoverage"= c(respondent_coverage, postOnly_coverage, adaptOnly_coverage, adaptPost_coverage),
+             "Rindicator"= c(respondent_Rindicator, postOnly_Rindicator, adaptOnly_Rindicator, adaptPost_Rindicator),
+             "IMB"= c(respondent_IMB, postOnly_IMB, adaptOnly_IMB, adaptPost_IMB))
+  
+  TB_rig<- rbind(TB_rig, rows)
+  
+}
+
+benefit_rig<- TB_rig %>%
+  dplyr::group_by(setting) %>%
+  dplyr::filter(method %in% c("PostOnly", "Adapt+Post")) %>%
+  dplyr::summarise(benefitBias= (abs(first(bias))- abs(last(bias)))/abs(first(bias)),
+            benefitVar= (first(variance)- last(variance))/first(variance),
+            benefitMse= (first(mse)- last(mse))/first(mse),
+            benefitR= first(Rindicator)- last(Rindicator),
+            benefitIMB= first(IMB)- last(IMB))
+  
+benefit_rig$benefitBias<- round(benefit_rig$benefitBias*100, 1)
+benefit_rig$benefitVar<- round(benefit_rig$benefitVar*100, 1)
+benefit_rig$benefitMse<- round(benefit_rig$benefitMse*100, 1)
+benefit_rig$benefitR<- round(benefit_rig$benefitR, 6)
+benefit_rig$benefitIMB<- round(benefit_rig$benefitIMB, 6)
+
+
+
+write.csv(TB_lef, "TB_lef_lin.csv")
+write.csv(TB_rig, "TB_rig_lin.csv")
+write.csv(benefit_lef, "benefit_lef_lin.csv")
+write.csv(benefit_rig, "benefit_rig_lin.csv")
+@
+
+
+Figure 5a, 5b, and 5c
+\section{Figure 5}
+<<>>=
+TB_lef_cat<- read.csv("TB_lef_cat.csv")
+TB_rig_cat<- read.csv("TB_rig_cat.csv")
+TB_lef_lin<- read.csv("TB_lef_lin.csv")
+TB_rig_lin<- read.csv("TB_rig_lin.csv")
+
+#Plotting adaptive-post and post-only estimates as pairs.
+TB_lef_cat$categorical<- "cat"
+TB_rig_cat$categorical<- "cat"
+TB_lef_lin$categorical<- "lin"
+TB_rig_lin$categorical<- "lin"
+
+TB_lef_cat$effect<- "medi"
+TB_rig_cat$effect<- "good"
+TB_lef_lin$effect<- "medi"
+TB_rig_lin$effect<- "good"
+
+
+TB<- rbind(TB_lef_cat, TB_rig_cat)%>% rbind(TB_lef_lin)%>% rbind(TB_rig_lin)
+
+TB_plot<- TB%>%
+  filter(method%in% c("PostOnly", "Adapt+Post"))%>%
+  filter(setting%in% c("A", "Aomit1", "B", "Bomit1", "C", "Comit1"))
+TB_plot$plot_setting<- paste(TB_plot$setting,  TB_plot$categorical, TB_plot$effect)
+
+
+ggplot(data = TB_plot, aes(x= plot_setting, y= abs(bias), color= method, shape= method))+
+  geom_point(size= 2)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  scale_color_manual(values=c("#00274C", "darkorange"))+
+  labs(x =element_blank(), y = "absolute(Bias)")
+
+
+ggplot(data = TB_plot, aes(x= plot_setting, y= variance, color= method, shape= method))+
+  geom_point(size= 2)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  scale_color_manual(values=c("#00274C", "darkorange"))+
+  labs(x =element_blank(), y = "Variance")
+ggplot(data = TB_plot, aes(x= plot_setting, y= mse, color= method, shape= method))+
+  geom_point(size= 2)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  scale_color_manual(values=c("#00274C", "darkorange"))+
+  labs(x =element_blank(), y = "MSE")
+@
+
+
+
+
+Appendix 2 Table I
+
+<<Table I>>=
+resultList<- resultList_coef_allo$cat$medi
+TB<- data.frame()
+for (i in 1:length(loop)){
+  respondent_n<- round(mean(resultList[[i]]$respondent$size), 7)
+  respondent_bias<- round(mean(resultList[[i]]$respondent$bias), 7)
+  respondent_var<- round(var(resultList[[i]]$respondent$estimate), 7)
+  respondent_mse<- round(respondent_bias^2+ respondent_var, 7)
+  respondent_coverage<- round(sum(resultList[[i]]$respondent$coverYes)/nRep*100, 2)
+  respondent_Rindicator<- round(mean(resultList[[i]]$respondent$Rindicator), 7)
+  respondent_IMB<- round(mean(resultList[[i]]$respondent$IMB), 7)
+  
+  postOnly_n<- round(mean(resultList[[i]]$postOnly$size), 7)
+  postOnly_bias<- round(mean(resultList[[i]]$postOnly$bias), 7)
+  postOnly_var<- round(var(resultList[[i]]$postOnly$estimate), 7)
+  postOnly_mse<- round(postOnly_bias^2+ postOnly_var, 7)
+  postOnly_coverage<- round(sum(resultList[[i]]$postOnly$coverYes)/nRep*100, 2)
+  postOnly_Rindicator<- round(mean(resultList[[i]]$postOnly$Rindicator), 7)
+  postOnly_IMB<- round(mean(resultList[[i]]$postOnly$IMB), 7)
+  
+  adaptOnly_n<- round(mean(resultList[[i]]$adaptOnly$size), 7)
+  adaptOnly_bias<- round(mean(resultList[[i]]$adaptOnly$bias), 7)
+  adaptOnly_var<- round(var(resultList[[i]]$adaptOnly$estimate), 7)
+  adaptOnly_mse<- round(adaptOnly_bias^2+ adaptOnly_var, 7)
+  adaptOnly_coverage<- round(sum(resultList[[i]]$adaptOnly$coverYes)/nRep*100, 2)
+  adaptOnly_Rindicator<- round(mean(resultList[[i]]$adaptOnly$Rindicator), 7)
+  adaptOnly_IMB<- round(mean(resultList[[i]]$adaptOnly$IMB), 7)
+  
+  adaptPost_n<- round(mean(resultList[[i]]$adaptPost$size), 7)
+  adaptPost_bias<- round(mean(resultList[[i]]$adaptPost$bias), 7)
+  adaptPost_var<- round(var(resultList[[i]]$adaptPost$estimate), 7)
+  adaptPost_mse<- round(adaptPost_bias^2+ adaptPost_var, 7)
+  adaptPost_coverage<- round(sum(resultList[[i]]$adaptPost$coverYes)/nRep*100, 2)
+  adaptPost_Rindicator<- round(mean(resultList[[i]]$adaptPost$Rindicator), 7)
+  adaptPost_IMB<- round(mean(resultList[[i]]$adaptPost$IMB), 7)
+  
+  #diff_bias<- sum(abs(resultList[[i]]$adaptPost$bias)< abs(resultList[[i]]$postOnly$bias))
+  #diff_var<- sum(resultList[[i]]$adaptPost$var< resultList[[i]]$postOnly$var)
+  #diff_mse<- sum(resultList[[i]]$adaptPost$mse< resultList[[i]]$postOnly$mse)
+  
+ rows<- data.frame("setting"= c(loop[i], loop[i], loop[i], loop[i]),
+             "method"= c("respondent", "PostOnly", "AdaptOnly", "Adapt+Post"), 
+             "n"= c(respondent_n, postOnly_n, adaptOnly_n, adaptPost_n),
+             "bias"= c(respondent_bias, postOnly_bias, adaptOnly_bias, adaptPost_bias),
+             "variance"= c(respondent_var, postOnly_var, adaptOnly_var, adaptPost_var),
+             "mse"= c(respondent_mse, postOnly_mse, adaptOnly_mse, adaptPost_mse),
+             "ciCoverage"= c(respondent_coverage, postOnly_coverage, adaptOnly_coverage, adaptPost_coverage),
+             "Rindicator"= c(respondent_Rindicator, postOnly_Rindicator, adaptOnly_Rindicator, adaptPost_Rindicator),
+             "IMB"= c(respondent_IMB, postOnly_IMB, adaptOnly_IMB, adaptPost_IMB))
+  
+  TB<- rbind(TB, rows)
+  
+}
+
+
+benefit<- TB%>%
+  dplyr::group_by(setting) %>%
+  dplyr::filter(method %in% c("PostOnly", "Adapt+Post")) %>%
+  dplyr::summarise(benefitBias= (abs(first(bias))- abs(last(bias)))/abs(first(bias)),
+            benefitVar= (first(variance)- last(variance))/first(variance),
+            benefitMse= (first(mse)- last(mse))/first(mse),
+            benefitR= first(Rindicator)- last(Rindicator),
+            benefitIMB= first(IMB)- last(IMB))
+  
+benefit$benefitBias<- round(benefit$benefitBias*100, 1)
+benefit$benefitVar<- round(benefit$benefitVar*100, 1)
+benefit$benefitMse<- round(benefit$benefitMse*100, 1)
+benefit$benefitR<- round(benefit$benefitR, 6)
+benefit$benefitIMB<- round(benefit$benefitIMB, 6)
+
+
+write.csv(TB, "appendix_TB1.csv")
+write.csv(benefit, "appendix_benefit1.csv")
+
+
+#Correlation between model quality and adaptive design benefits
+evaluationList<- evaluationList_coef_allo$cat$medi
+evaluation_average<- data.frame()
+
+for (i in 1:length(loop)){
+  s1_auroc_avg<- mean(evaluationList[[i]]$s1_auroc)
+  s1_pseudoR2_avg<- mean(evaluationList[[i]]$s1_pseudoR2)
+  s2_quartile_classifi_accu_avg<- mean(evaluationList[[i]]$s2_quartile_classifi_accu)
+  
+  row<- data.frame("setting"= loop[i],
+                   "s1_auroc"= s1_auroc_avg,
+                   "s1_pseudoR2"= s1_pseudoR2_avg,
+                   "s2_quartile_classifi_accu"= s2_quartile_classifi_accu_avg)
+  
+  evaluation_average<- rbind(evaluation_average, row)
+}
+evaluation_average<- evaluation_average[order(evaluation_average$setting),]
+benefit<- benefit[order(benefit$setting),]
+evaluation_benefit<- left_join(evaluation_average, benefit, by= "setting")
+
+cor_cat_medi_1<- ggplot(evaluation_benefit, aes(x= s1_auroc, 
+           y= benefitMse,
+           label= setting))+
+  geom_point()+
+  geom_text(aes(label= setting), position = position_nudge(y = 2), size = 1.5)+
+  ylab("Benefit in MSE")+
+  xlab("propensity model AUROC")+
+  ggtitle(paste0("correlation=", 
+                 round(cor(evaluation_benefit$s1_auroc,
+                     evaluation_benefit$benefitMse), 2)))
+
+
+cor_cat_medi_2<- ggplot(evaluation_benefit, aes(x= s1_pseudoR2, 
+           y= benefitMse,
+           label= setting))+
+  geom_point()+
+  geom_text(aes(label= setting), position = position_nudge(y = 2), size = 1.5)+
+  ylab("Benefit in MSE")+
+  xlab("propensity model pseudo R-squared")+
+  ggtitle(paste0("correlation=", 
+                 round(cor(evaluation_benefit$s1_pseudoR2,
+                     evaluation_benefit$benefitMse), 2)))
+
+
+@
+
+Appendix 2 Table II
+
+<<Table II>>=
+resultList<- resultList_coef_allo$lin$medi
+TB<- data.frame()
+for (i in 1:length(loop)){
+  respondent_n<- round(mean(resultList[[i]]$respondent$size), 7)
+  respondent_bias<- round(mean(resultList[[i]]$respondent$bias), 7)
+  respondent_var<- round(var(resultList[[i]]$respondent$estimate), 7)
+  respondent_mse<- round(respondent_bias^2+ respondent_var, 7)
+  respondent_coverage<- round(sum(resultList[[i]]$respondent$coverYes)/nRep*100, 2)
+  respondent_Rindicator<- round(mean(resultList[[i]]$respondent$Rindicator), 7)
+  respondent_IMB<- round(mean(resultList[[i]]$respondent$IMB), 7)
+  
+  postOnly_n<- round(mean(resultList[[i]]$postOnly$size), 7)
+  postOnly_bias<- round(mean(resultList[[i]]$postOnly$bias), 7)
+  postOnly_var<- round(var(resultList[[i]]$postOnly$estimate), 7)
+  postOnly_mse<- round(postOnly_bias^2+ postOnly_var, 7)
+  postOnly_coverage<- round(sum(resultList[[i]]$postOnly$coverYes)/nRep*100, 2)
+  postOnly_Rindicator<- round(mean(resultList[[i]]$postOnly$Rindicator), 7)
+  postOnly_IMB<- round(mean(resultList[[i]]$postOnly$IMB), 7)
+  
+  adaptOnly_n<- round(mean(resultList[[i]]$adaptOnly$size), 7)
+  adaptOnly_bias<- round(mean(resultList[[i]]$adaptOnly$bias), 7)
+  adaptOnly_var<- round(var(resultList[[i]]$adaptOnly$estimate), 7)
+  adaptOnly_mse<- round(adaptOnly_bias^2+ adaptOnly_var, 7)
+  adaptOnly_coverage<- round(sum(resultList[[i]]$adaptOnly$coverYes)/nRep*100, 2)
+  adaptOnly_Rindicator<- round(mean(resultList[[i]]$adaptOnly$Rindicator), 7)
+  adaptOnly_IMB<- round(mean(resultList[[i]]$adaptOnly$IMB), 7)
+  
+  adaptPost_n<- round(mean(resultList[[i]]$adaptPost$size), 7)
+  adaptPost_bias<- round(mean(resultList[[i]]$adaptPost$bias), 7)
+  adaptPost_var<- round(var(resultList[[i]]$adaptPost$estimate), 7)
+  adaptPost_mse<- round(adaptPost_bias^2+ adaptPost_var, 7)
+  adaptPost_coverage<- round(sum(resultList[[i]]$adaptPost$coverYes)/nRep*100, 2)
+  adaptPost_Rindicator<- round(mean(resultList[[i]]$adaptPost$Rindicator), 7)
+  adaptPost_IMB<- round(mean(resultList[[i]]$adaptPost$IMB), 7)
+  
+  #diff_bias<- sum(abs(resultList[[i]]$adaptPost$bias)< abs(resultList[[i]]$postOnly$bias))
+  #diff_var<- sum(resultList[[i]]$adaptPost$var< resultList[[i]]$postOnly$var)
+  #diff_mse<- sum(resultList[[i]]$adaptPost$mse< resultList[[i]]$postOnly$mse)
+  
+ rows<- data.frame("setting"= c(loop[i], loop[i], loop[i], loop[i]),
+             "method"= c("respondent", "PostOnly", "AdaptOnly", "Adapt+Post"), 
+             "n"= c(respondent_n, postOnly_n, adaptOnly_n, adaptPost_n),
+             "bias"= c(respondent_bias, postOnly_bias, adaptOnly_bias, adaptPost_bias),
+             "variance"= c(respondent_var, postOnly_var, adaptOnly_var, adaptPost_var),
+             "mse"= c(respondent_mse, postOnly_mse, adaptOnly_mse, adaptPost_mse),
+             "ciCoverage"= c(respondent_coverage, postOnly_coverage, adaptOnly_coverage, adaptPost_coverage),
+             "Rindicator"= c(respondent_Rindicator, postOnly_Rindicator, adaptOnly_Rindicator, adaptPost_Rindicator),
+             "IMB"= c(respondent_IMB, postOnly_IMB, adaptOnly_IMB, adaptPost_IMB))
+  
+  TB<- rbind(TB, rows)
+  
+}
+
+
+benefit<- TB%>%
+  dplyr::group_by(setting) %>%
+  dplyr::filter(method %in% c("PostOnly", "Adapt+Post")) %>%
+  dplyr::summarise(benefitBias= (abs(first(bias))- abs(last(bias)))/abs(first(bias)),
+            benefitVar= (first(variance)- last(variance))/first(variance),
+            benefitMse= (first(mse)- last(mse))/first(mse),
+            benefitR= first(Rindicator)- last(Rindicator),
+            benefitIMB= first(IMB)- last(IMB))
+  
+benefit$benefitBias<- round(benefit$benefitBias*100, 1)
+benefit$benefitVar<- round(benefit$benefitVar*100, 1)
+benefit$benefitMse<- round(benefit$benefitMse*100, 1)
+benefit$benefitR<- round(benefit$benefitR, 6)
+benefit$benefitIMB<- round(benefit$benefitIMB, 6)
+
+
+write.csv(TB, "appendix_TB2.csv")
+write.csv(benefit, "appendix_benefit2.csv")
+
+
+
+#Correlation between model quality and adaptive design benefits
+evaluationList<- evaluationList_coef_allo$lin$medi
+evaluation_average<- data.frame()
+
+for (i in 1:length(loop)){
+  s1_auroc_avg<- mean(evaluationList[[i]]$s1_auroc)
+  s1_pseudoR2_avg<- mean(evaluationList[[i]]$s1_pseudoR2)
+  s2_quartile_classifi_accu_avg<- mean(evaluationList[[i]]$s2_quartile_classifi_accu)
+  
+  row<- data.frame("setting"= loop[i],
+                   "s1_auroc"= s1_auroc_avg,
+                   "s1_pseudoR2"= s1_pseudoR2_avg,
+                   "s2_quartile_classifi_accu"= s2_quartile_classifi_accu_avg)
+  
+  evaluation_average<- rbind(evaluation_average, row)
+}
+evaluation_average<- evaluation_average[order(evaluation_average$setting),]
+benefit<- benefit[order(benefit$setting),]
+evaluation_benefit<- left_join(evaluation_average, benefit, by= "setting")
+
+cor_lin_medi_1<- ggplot(evaluation_benefit, aes(x= s1_auroc, 
+           y= benefitMse,
+           label= setting))+
+  geom_point()+
+  geom_text(aes(label= setting), position = position_nudge(y = 2), size = 1.5)+
+  ylab("Benefit in MSE")+
+  xlab("propensity model AUROC")+
+  ggtitle(paste0("correlation=", 
+                 round(cor(evaluation_benefit$s1_auroc,
+                     evaluation_benefit$benefitMse), 2)))
+
+
+cor_lin_medi_2<- ggplot(evaluation_benefit, aes(x= s1_pseudoR2, 
+           y= benefitMse,
+           label= setting))+
+  geom_point()+
+  geom_text(aes(label= setting), position = position_nudge(y = 2), size = 1.5)+
+  ylab("Benefit in MSE")+
+  xlab("propensity model pseudo R-squared")+
+  ggtitle(paste0("correlation=", 
+                 round(cor(evaluation_benefit$s1_pseudoR2,
+                     evaluation_benefit$benefitMse), 2)))
+@
+
+Appendix 2 Table III
+
+<<Table III>>=
+resultList<- resultList_coef_allo$cat$good
+TB<- data.frame()
+for (i in 1:length(loop)){
+  respondent_n<- round(mean(resultList[[i]]$respondent$size), 7)
+  respondent_bias<- round(mean(resultList[[i]]$respondent$bias), 7)
+  respondent_var<- round(var(resultList[[i]]$respondent$estimate), 7)
+  respondent_mse<- round(respondent_bias^2+ respondent_var, 7)
+  respondent_coverage<- round(sum(resultList[[i]]$respondent$coverYes)/nRep*100, 2)
+  respondent_Rindicator<- round(mean(resultList[[i]]$respondent$Rindicator), 7)
+  respondent_IMB<- round(mean(resultList[[i]]$respondent$IMB), 7)
+  
+  postOnly_n<- round(mean(resultList[[i]]$postOnly$size), 7)
+  postOnly_bias<- round(mean(resultList[[i]]$postOnly$bias), 7)
+  postOnly_var<- round(var(resultList[[i]]$postOnly$estimate), 7)
+  postOnly_mse<- round(postOnly_bias^2+ postOnly_var, 7)
+  postOnly_coverage<- round(sum(resultList[[i]]$postOnly$coverYes)/nRep*100, 2)
+  postOnly_Rindicator<- round(mean(resultList[[i]]$postOnly$Rindicator), 7)
+  postOnly_IMB<- round(mean(resultList[[i]]$postOnly$IMB), 7)
+  
+  adaptOnly_n<- round(mean(resultList[[i]]$adaptOnly$size), 7)
+  adaptOnly_bias<- round(mean(resultList[[i]]$adaptOnly$bias), 7)
+  adaptOnly_var<- round(var(resultList[[i]]$adaptOnly$estimate), 7)
+  adaptOnly_mse<- round(adaptOnly_bias^2+ adaptOnly_var, 7)
+  adaptOnly_coverage<- round(sum(resultList[[i]]$adaptOnly$coverYes)/nRep*100, 2)
+  adaptOnly_Rindicator<- round(mean(resultList[[i]]$adaptOnly$Rindicator), 7)
+  adaptOnly_IMB<- round(mean(resultList[[i]]$adaptOnly$IMB), 7)
+  
+  adaptPost_n<- round(mean(resultList[[i]]$adaptPost$size), 7)
+  adaptPost_bias<- round(mean(resultList[[i]]$adaptPost$bias), 7)
+  adaptPost_var<- round(var(resultList[[i]]$adaptPost$estimate), 7)
+  adaptPost_mse<- round(adaptPost_bias^2+ adaptPost_var, 7)
+  adaptPost_coverage<- round(sum(resultList[[i]]$adaptPost$coverYes)/nRep*100, 2)
+  adaptPost_Rindicator<- round(mean(resultList[[i]]$adaptPost$Rindicator), 7)
+  adaptPost_IMB<- round(mean(resultList[[i]]$adaptPost$IMB), 7)
+  
+  #diff_bias<- sum(abs(resultList[[i]]$adaptPost$bias)< abs(resultList[[i]]$postOnly$bias))
+  #diff_var<- sum(resultList[[i]]$adaptPost$var< resultList[[i]]$postOnly$var)
+  #diff_mse<- sum(resultList[[i]]$adaptPost$mse< resultList[[i]]$postOnly$mse)
+  
+ rows<- data.frame("setting"= c(loop[i], loop[i], loop[i], loop[i]),
+             "method"= c("respondent", "PostOnly", "AdaptOnly", "Adapt+Post"), 
+             "n"= c(respondent_n, postOnly_n, adaptOnly_n, adaptPost_n),
+             "bias"= c(respondent_bias, postOnly_bias, adaptOnly_bias, adaptPost_bias),
+             "variance"= c(respondent_var, postOnly_var, adaptOnly_var, adaptPost_var),
+             "mse"= c(respondent_mse, postOnly_mse, adaptOnly_mse, adaptPost_mse),
+             "ciCoverage"= c(respondent_coverage, postOnly_coverage, adaptOnly_coverage, adaptPost_coverage),
+             "Rindicator"= c(respondent_Rindicator, postOnly_Rindicator, adaptOnly_Rindicator, adaptPost_Rindicator),
+             "IMB"= c(respondent_IMB, postOnly_IMB, adaptOnly_IMB, adaptPost_IMB))
+  
+  TB<- rbind(TB, rows)
+  
+}
+
+
+benefit<- TB%>%
+  dplyr::group_by(setting) %>%
+  dplyr::filter(method %in% c("PostOnly", "Adapt+Post")) %>%
+  dplyr::summarise(benefitBias= (abs(first(bias))- abs(last(bias)))/abs(first(bias)),
+            benefitVar= (first(variance)- last(variance))/first(variance),
+            benefitMse= (first(mse)- last(mse))/first(mse),
+            benefitR= first(Rindicator)- last(Rindicator),
+            benefitIMB= first(IMB)- last(IMB))
+  
+benefit$benefitBias<- round(benefit$benefitBias*100, 1)
+benefit$benefitVar<- round(benefit$benefitVar*100, 1)
+benefit$benefitMse<- round(benefit$benefitMse*100, 1)
+benefit$benefitR<- round(benefit$benefitR, 6)
+benefit$benefitIMB<- round(benefit$benefitIMB, 6)
+
+
+write.csv(TB, "appendix_TB3.csv")
+write.csv(benefit, "appendix_benefit3.csv")
+
+
+#Correlation between model quality and adaptive design benefits
+evaluationList<- evaluationList_coef_allo$cat$good
+evaluation_average<- data.frame()
+
+for (i in 1:length(loop)){
+  s1_auroc_avg<- mean(evaluationList[[i]]$s1_auroc)
+  s1_pseudoR2_avg<- mean(evaluationList[[i]]$s1_pseudoR2)
+  s2_quartile_classifi_accu_avg<- mean(evaluationList[[i]]$s2_quartile_classifi_accu)
+  
+  row<- data.frame("setting"= loop[i],
+                   "s1_auroc"= s1_auroc_avg,
+                   "s1_pseudoR2"= s1_pseudoR2_avg,
+                   "s2_quartile_classifi_accu"= s2_quartile_classifi_accu_avg)
+  
+  evaluation_average<- rbind(evaluation_average, row)
+}
+evaluation_average<- evaluation_average[order(evaluation_average$setting),]
+benefit<- benefit[order(benefit$setting),]
+evaluation_benefit<- left_join(evaluation_average, benefit, by= "setting")
+
+cor_cat_good_1<- ggplot(evaluation_benefit, aes(x= s1_auroc, 
+           y= benefitMse,
+           label= setting))+
+  geom_point()+
+  geom_text(aes(label= setting), position = position_nudge(y = 2), size = 1.5)+
+  ylab("Benefit in MSE")+
+  xlab("propensity model AUROC")+
+  ggtitle(paste0("correlation=", 
+                 round(cor(evaluation_benefit$s1_auroc,
+                     evaluation_benefit$benefitMse), 2)))
+
+
+cor_cat_good_2<- ggplot(evaluation_benefit, aes(x= s1_pseudoR2, 
+           y= benefitMse,
+           label= setting))+
+  geom_point()+
+  geom_text(aes(label= setting), position = position_nudge(y = 2), size = 1.5)+
+  ylab("Benefit in MSE")+
+  xlab("propensity model pseudo R-squared")+
+  ggtitle(paste0("correlation=", 
+                 round(cor(evaluation_benefit$s1_pseudoR2,
+                     evaluation_benefit$benefitMse), 2)))
+@
+
+
+Appendix 2 Table IV
+
+<<Table IV>>=
+resultList<- resultList_coef_allo$lin$good
+TB<- data.frame()
+for (i in 1:length(loop)){
+  respondent_n<- round(mean(resultList[[i]]$respondent$size), 7)
+  respondent_bias<- round(mean(resultList[[i]]$respondent$bias), 7)
+  respondent_var<- round(var(resultList[[i]]$respondent$estimate), 7)
+  respondent_mse<- round(respondent_bias^2+ respondent_var, 7)
+  respondent_coverage<- round(sum(resultList[[i]]$respondent$coverYes)/nRep*100, 2)
+  respondent_Rindicator<- round(mean(resultList[[i]]$respondent$Rindicator), 7)
+  respondent_IMB<- round(mean(resultList[[i]]$respondent$IMB), 7)
+  
+  postOnly_n<- round(mean(resultList[[i]]$postOnly$size), 7)
+  postOnly_bias<- round(mean(resultList[[i]]$postOnly$bias), 7)
+  postOnly_var<- round(var(resultList[[i]]$postOnly$estimate), 7)
+  postOnly_mse<- round(postOnly_bias^2+ postOnly_var, 7)
+  postOnly_coverage<- round(sum(resultList[[i]]$postOnly$coverYes)/nRep*100, 2)
+  postOnly_Rindicator<- round(mean(resultList[[i]]$postOnly$Rindicator), 7)
+  postOnly_IMB<- round(mean(resultList[[i]]$postOnly$IMB), 7)
+  
+  adaptOnly_n<- round(mean(resultList[[i]]$adaptOnly$size), 7)
+  adaptOnly_bias<- round(mean(resultList[[i]]$adaptOnly$bias), 7)
+  adaptOnly_var<- round(var(resultList[[i]]$adaptOnly$estimate), 7)
+  adaptOnly_mse<- round(adaptOnly_bias^2+ adaptOnly_var, 7)
+  adaptOnly_coverage<- round(sum(resultList[[i]]$adaptOnly$coverYes)/nRep*100, 2)
+  adaptOnly_Rindicator<- round(mean(resultList[[i]]$adaptOnly$Rindicator), 7)
+  adaptOnly_IMB<- round(mean(resultList[[i]]$adaptOnly$IMB), 7)
+  
+  adaptPost_n<- round(mean(resultList[[i]]$adaptPost$size), 7)
+  adaptPost_bias<- round(mean(resultList[[i]]$adaptPost$bias), 7)
+  adaptPost_var<- round(var(resultList[[i]]$adaptPost$estimate), 7)
+  adaptPost_mse<- round(adaptPost_bias^2+ adaptPost_var, 7)
+  adaptPost_coverage<- round(sum(resultList[[i]]$adaptPost$coverYes)/nRep*100, 2)
+  adaptPost_Rindicator<- round(mean(resultList[[i]]$adaptPost$Rindicator), 7)
+  adaptPost_IMB<- round(mean(resultList[[i]]$adaptPost$IMB), 7)
+  
+  #diff_bias<- sum(abs(resultList[[i]]$adaptPost$bias)< abs(resultList[[i]]$postOnly$bias))
+  #diff_var<- sum(resultList[[i]]$adaptPost$var< resultList[[i]]$postOnly$var)
+  #diff_mse<- sum(resultList[[i]]$adaptPost$mse< resultList[[i]]$postOnly$mse)
+  
+ rows<- data.frame("setting"= c(loop[i], loop[i], loop[i], loop[i]),
+             "method"= c("respondent", "PostOnly", "AdaptOnly", "Adapt+Post"), 
+             "n"= c(respondent_n, postOnly_n, adaptOnly_n, adaptPost_n),
+             "bias"= c(respondent_bias, postOnly_bias, adaptOnly_bias, adaptPost_bias),
+             "variance"= c(respondent_var, postOnly_var, adaptOnly_var, adaptPost_var),
+             "mse"= c(respondent_mse, postOnly_mse, adaptOnly_mse, adaptPost_mse),
+             "ciCoverage"= c(respondent_coverage, postOnly_coverage, adaptOnly_coverage, adaptPost_coverage),
+             "Rindicator"= c(respondent_Rindicator, postOnly_Rindicator, adaptOnly_Rindicator, adaptPost_Rindicator),
+             "IMB"= c(respondent_IMB, postOnly_IMB, adaptOnly_IMB, adaptPost_IMB))
+  
+  TB<- rbind(TB, rows)
+  
+}
+
+
+benefit<- TB%>%
+  dplyr::group_by(setting) %>%
+  dplyr::filter(method %in% c("PostOnly", "Adapt+Post")) %>%
+  dplyr::summarise(benefitBias= (abs(first(bias))- abs(last(bias)))/abs(first(bias)),
+            benefitVar= (first(variance)- last(variance))/first(variance),
+            benefitMse= (first(mse)- last(mse))/first(mse),
+            benefitR= first(Rindicator)- last(Rindicator),
+            benefitIMB= first(IMB)- last(IMB))
+  
+benefit$benefitBias<- round(benefit$benefitBias*100, 1)
+benefit$benefitVar<- round(benefit$benefitVar*100, 1)
+benefit$benefitMse<- round(benefit$benefitMse*100, 1)
+benefit$benefitR<- round(benefit$benefitR, 6)
+benefit$benefitIMB<- round(benefit$benefitIMB, 6)
+
+
+write.csv(TB, "appendix_TB4.csv")
+write.csv(benefit, "appendix_benefit4.csv")
+
+#Correlation between model quality and adaptive design benefits
+evaluationList<- evaluationList_coef_allo$lin$good
+evaluation_average<- data.frame()
+
+for (i in 1:length(loop)){
+  s1_auroc_avg<- mean(evaluationList[[i]]$s1_auroc)
+  s1_pseudoR2_avg<- mean(evaluationList[[i]]$s1_pseudoR2)
+  s2_quartile_classifi_accu_avg<- mean(evaluationList[[i]]$s2_quartile_classifi_accu)
+  
+  row<- data.frame("setting"= loop[i],
+                   "s1_auroc"= s1_auroc_avg,
+                   "s1_pseudoR2"= s1_pseudoR2_avg,
+                   "s2_quartile_classifi_accu"= s2_quartile_classifi_accu_avg)
+  
+  evaluation_average<- rbind(evaluation_average, row)
+}
+evaluation_average<- evaluation_average[order(evaluation_average$setting),]
+benefit<- benefit[order(benefit$setting),]
+evaluation_benefit<- left_join(evaluation_average, benefit, by= "setting")
+
+cor_lin_good_1<- ggplot(evaluation_benefit, aes(x= s1_auroc, 
+           y= benefitMse,
+           label= setting))+
+  geom_point()+
+  geom_text(aes(label= setting), position = position_nudge(y = 2), size = 1.5)+
+  ylab("Benefit in MSE")+
+  xlab("propensity model AUROC")+
+  ggtitle(paste0("correlation=", 
+                 round(cor(evaluation_benefit$s1_auroc,
+                     evaluation_benefit$benefitMse), 2)))
+
+
+cor_lin_good_2<- ggplot(evaluation_benefit, aes(x= s1_pseudoR2, 
+           y= benefitMse,
+           label= setting))+
+  geom_point()+
+  geom_text(aes(label= setting), position = position_nudge(y = 2), size = 1.5)+
+  ylab("Benefit in MSE")+
+  xlab("propensity model pseudo R-squared")+
+  ggtitle(paste0("correlation=", 
+                 round(cor(evaluation_benefit$s1_pseudoR2,
+                     evaluation_benefit$benefitMse), 2)))
+@
+
+
+
+Figure 6
+
+\begin{center}
+<<Correlation between accuracy and MSE benefit, include=TRUE, fig.align='center', out.width = '1\\textwidth'>>=
+title1 <- ggdraw() + 
+  draw_label("categorical allocation + mediocre effect:",
+             fontface = 'bold', x = 0, hjust=0, size= 12) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+title2 <- ggdraw() + 
+  draw_label("linear allocation + mediocre effect:",
+             fontface = 'bold', x = 0, hjust=0, size= 12) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+title3 <- ggdraw() + 
+  draw_label("categorical allocation + good effect:",
+             fontface = 'bold', x = 0, hjust=0, size= 12) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+title4 <- ggdraw() + 
+  draw_label("linear allocation + good effect:",
+             fontface = 'bold', x = 0, hjust=0, size= 12) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+row1<- plot_grid(cor_cat_medi_1, nrow=1)
+row2<- plot_grid(cor_lin_medi_1, nrow=1)
+row3<- plot_grid(cor_cat_good_1, nrow=1)
+row4<- plot_grid(cor_lin_good_1, nrow=1)
+
+
+plot_grid(title1, title2,
+          row1, row2,
+          title3, title4,
+          row3, row4,
+          ncol= 2,
+          rel_heights = c(0.1, 1, 
+                          0.1, 1))
+
+
+
+
+@
+\textbf{Figure 6}
+\end{center}
+
+
+
+
+
+
+
+\bibliographystyle{apacite}
+\renewcommand{\section}[2]{}
+\bibliography{BIB_Additional, BIB_Nonresponse, BIB_RAD, BIB_Others, BIB_GISrelated}
+
+
+
+\end{document}
