@@ -376,7 +376,7 @@ datRes%>%
   select(Adaptive.Design)%>%
   table()
 datRes%>%
-  filter(!is.na(incomecat5_enrich))%>%
+  filter(!is.na(incomecat5))%>%
   select(Adaptive.Design)%>%
   table()
 
@@ -414,11 +414,11 @@ prop.table(t2, 2)%>%
 
 #Income distribution 
 # --> separate: experiment vs control + new vs established
-t1<- table(datRes$incomecat5_enrich, datRes$experiment_Panel)
+t1<- table(datRes$incomecat5, datRes$experiment_Panel)
 prop.table(t1, 2)%>%
   clipr::write_clip(.)
 # --> separate: experiment vs control
-t2<- table(datRes$incomecat5_enrich, datRes$experiment)
+t2<- table(datRes$incomecat5, datRes$experiment)
 prop.table(t2, 2)%>%
   clipr::write_clip(.)
 
@@ -525,11 +525,11 @@ svytable(~racecat5, ps.design_con)%>%
 
 #Income distribution 
 # --> separate: experiment vs control
-svytable(~incomecat5_enrich, ps.design_exp)%>%
+svytable(~incomecat5, ps.design_exp)%>%
   prop.table()%>%
   data.frame()%>%
   clipr::write_clip(.)
-svytable(~incomecat5_enrich, ps.design_con)%>%
+svytable(~incomecat5, ps.design_con)%>%
   prop.table()%>%
   data.frame()%>%
   clipr::write_clip(.)
@@ -1342,7 +1342,7 @@ t%>% prop.table(1)
 chisq.test(t)
 
 ## ====+ Telephone/web on demographics?====
-t<- table(datRes$telephone, datRes$gender_enrich)
+t<- table(datRes$telephone, datRes$gender)
 t%>% t()%>% write_clip()
 t%>% prop.table(2)%>% t()%>% write_clip()
 chisq.test(t)
@@ -1367,7 +1367,7 @@ t%>% t()%>% write_clip()
 t%>% prop.table(2)%>% t()%>% write_clip()
 chisq.test(t)
 
-t<- table(datRes$telephone, datRes$incomecat5_enrich)
+t<- table(datRes$telephone, datRes$incomecat5)
 t%>% t()%>% write_clip()
 t%>% prop.table(2)%>% t()%>% write_clip()
 chisq.test(t)
@@ -1410,10 +1410,6 @@ t<- datRes%>% dplyr::select(insured_d12, telephone)%>% table()
 t%>% prop.table(2)%>% write_clip()
 chisq.test(t)
 
-t<- datRes_enrich%>% dplyr::select(inRcd_full, telephone)%>% table()
-t%>% prop.table(2)%>% write_clip()
-chisq.test(t)
-
 t<- datRes%>% dplyr::select(distrust_doctor, telephone)%>% table()
 t%>% prop.table(2)%>% write_clip()
 chisq.test(t)
@@ -1437,13 +1433,4 @@ chisq.test(t)
 t<- datRes%>% dplyr::select(walk_unsafe, telephone)%>% table()
 t%>% prop.table(2)%>% write_clip()
 chisq.test(t)
-
-
-t.test(vac_covid_d12~ telephone, data= datRes_enrich)
-t.test(nb_satis_d12~ telephone, data= datRes_enrich)
-t.test(nb_reputation_d12~ telephone, data= datRes_enrich)
-
-table(datRes_enrich$vac_covid_d12, exclude= F)
-table(datRes_enrich$nb_satis_d12, exclude= F)
-table(datRes_enrich$nb_reputation_d12, exclude= F)
 
